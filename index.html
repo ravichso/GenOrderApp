@@ -135,7 +135,7 @@
 </header>
 
 <!-- ================ SIGN-IN ================ -->
-<section id="signIn" class="card">
+<section id="signIn" class="card hidden">
   <h2>Sign in</h2>
   <p class="muted">Enter your registered phone and PIN.</p>
   <div id="signInError" class="error hidden"></div>
@@ -167,6 +167,9 @@
     <div style="height:6px"></div>
     <label>Phone number</label>
     <input id="suPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. +919876543210">
+    <div style="height:6px"></div>
+    <label>Delivery address</label>
+    <textarea id="suAddress" placeholder="Full address for delivery" style="min-height:50px"></textarea>
     <div style="height:10px"></div>
     <button class="primary" onclick="doSignupRequest()">Send verification code</button>
     <div style="height:6px"></div>
@@ -203,12 +206,14 @@
   </div>
 </section>
 
-<!-- ================ TABS (shown after sign-in) ================ -->
+<!-- ================ TABS ================ -->
 <nav class="tabs hidden" id="tabsBar">
   <button data-tab="shop"    onclick="showTab('shop')">Shop</button>
   <button data-tab="cart"    onclick="showTab('cart')">Cart</button>
-  <button data-tab="orders"  onclick="showTab('orders')">My orders</button>
-  <button data-tab="account" onclick="showTab('account')">Account</button>
+  <button id="btnTabOrders"  data-tab="orders"  onclick="showTab('orders')" class="hidden">My orders</button>
+  <button id="btnTabAccount" data-tab="account" onclick="showTab('account')" class="hidden">Account</button>
+  <button id="btnTabSignin"  onclick="showTab('signin')" class="hidden">Sign in</button>
+  <button id="btnTabSignup"  onclick="showTab('signup')" class="hidden">Sign up</button>
 </nav>
 
 <!-- ================ SHOP ================ -->
@@ -226,11 +231,20 @@
     <div id="cartLines"></div>
     <div id="cartEmpty" class="muted">Cart is empty.</div>
     <div style="height:8px"></div>
+    <label>Delivery address <span style="color:var(--err)">*</span></label>
+    <textarea id="orderAddress" placeholder="Full delivery address (required)"></textarea>
+    <div style="height:6px"></div>
     <label>Notes for admin (optional)</label>
     <textarea id="orderNotes" placeholder="Delivery instructions, preferences…"></textarea>
     <div id="cartError" class="error hidden"></div>
     <div id="cartSuccess" class="success hidden"></div>
     <div style="height:8px"></div>
+    <div id="cartSigninPrompt" class="hidden" style="margin-bottom:10px">
+      <p class="muted" style="margin:0 0 8px">You must be signed in to place an order.</p>
+      <button class="primary" onclick="showTab('signin')">Sign in</button>
+      <div style="height:4px"></div>
+      <button class="ghost" onclick="showTab('signup')">New customer? Sign up</button>
+    </div>
     <button class="primary" id="btnSubmit" onclick="submitOrder()">Submit order</button>
   </div>
 </section>
@@ -338,7 +352,7 @@
  * Config — replace API_BASE with your Worker URL after deploy
  * ------------------------------------------------------------- */
 const CONFIG = {
-  API_BASE: 'https://gen-order-api.YOUR-SUBDOMAIN.workers.dev',
+  API_BASE: 'https://gen-order-api.so-ravichandran.workers.dev',
   STORE_NAME: 'Order',
   ADMIN_ENABLED: false
 };
@@ -393,12 +407,13 @@ function showTab(name) {
     const el = $('tab-' + t);
     if (el) el.classList.add('hidden');
   }
+  hide('signIn');
+
   if (name === 'signin') {
     show('signIn');
     hide('tabsBar'); hide('cartBar');
     return;
   }
-  hide('signIn');
   if (name === 'reset' || name === 'signup' || name === 'signup2') {
     show('tab-' + name); hide('tabsBar'); hide('cartBar');
     if (name === 'signup2' && $('su2Phone').value === '' && $('suPhone').value) {
@@ -426,19 +441,30 @@ function showTab(name) {
  * Init
  * ------------------------------------------------------------- */
 async function init() {
+  await loadPublicSettings();
   const saved = localStorage.getItem('session');
   if (saved) {
     try {
       const s = JSON.parse(saved);
       if (s.phone && s.pin) {
         state.phone = s.phone; state.pin = s.pin;
-        await afterSignIn(true);
-        return;
       }
     } catch (_) {}
   }
-  await loadPublicSettings();
-  showTab('signin');
+  await loadMenu();
+  updateNavButtons();
+  showTab('shop');
+}
+
+function updateNavButtons() {
+  const loggedIn = !!(state.phone && state.pin);
+  if (loggedIn) {
+    show('btnTabOrders'); show('btnTabAccount');
+    hide('btnTabSignin'); hide('btnTabSignup');
+  } else {
+    hide('btnTabOrders'); hide('btnTabAccount');
+    show('btnTabSignin'); show('btnTabSignup');
+  }
 }
 
 async function loadPublicSettings() {
@@ -468,6 +494,10 @@ async function doSignIn() {
     await apiGet('/api/verify', { phone, pin });
     state.phone = phone; state.pin = pin;
     localStorage.setItem('session', JSON.stringify({ phone, pin }));
+    // If cart has items, go back to cart; otherwise normal flow
+    const hasCart = Object.keys(state.cart).length > 0;
+    updateNavButtons();
+    if (hasCart) { await loadMenu(); showTab('cart'); return; }
     await afterSignIn();
   } catch (e) {
     showSignInError(e.message || 'Sign-in failed.');
@@ -483,13 +513,15 @@ function showSignInError(msg) {
 async function afterSignIn(silent) {
   await loadPublicSettings();
   await loadMenu();
+  updateNavButtons();
   showTab('shop');
 }
 
 function signOut() {
   localStorage.removeItem('session');
   state.phone = ''; state.pin = ''; state.cart = {};
-  showTab('signin');
+  updateNavButtons();
+  showTab('shop');
 }
 
 /* ---------------------------------------------------------------
@@ -584,6 +616,9 @@ function renderCart() {
   const { lines, total } = cartLines();
   const box = $('cartLines');
   box.innerHTML = '';
+  const loggedIn = !!(state.phone && state.pin);
+  if (loggedIn) { hide('cartSigninPrompt'); show('btnSubmit'); }
+  else { show('cartSigninPrompt'); hide('btnSubmit'); }
   if (!lines.length) { show('cartEmpty'); $('btnSubmit').disabled = true; return; }
   hide('cartEmpty'); $('btnSubmit').disabled = false;
   for (const l of lines) {
@@ -606,6 +641,20 @@ async function submitOrder() {
   const { lines, total } = cartLines();
   if (!lines.length) return;
 
+  // Must be signed in
+  if (!state.phone || !state.pin) {
+    show('cartSigninPrompt');
+    return;
+  }
+  hide('cartSigninPrompt');
+
+  const addr = $('orderAddress').value.trim();
+  if (!addr) {
+    $('cartError').textContent = 'Delivery address is required.';
+    show('cartError');
+    return;
+  }
+
   const btn = $('btnSubmit'); btn.disabled = true; btn.textContent = 'Submitting\u2026';
   try {
     // Pre-verify
@@ -615,6 +664,7 @@ async function submitOrder() {
       phone: state.phone,
       pin: state.pin,
       notes: $('orderNotes').value.trim(),
+      delivery_address: addr,
       items: lines.map(l => ({ product_id: l.product.id, quantity: l.qty }))
     };
     const j = await apiPost('/api/orders', body);
@@ -818,11 +868,13 @@ async function useResetCode() {
  * ------------------------------------------------------------- */
 async function doSignupRequest() {
   hide('suError'); hide('suSuccess');
-  var phone = $('suPhone').value.trim();
-  var name  = $('suName').value.trim();
+  var phone   = $('suPhone').value.trim();
+  var name    = $('suName').value.trim();
+  var address = $('suAddress').value.trim();
   if (!phone) { $('suError').textContent = 'Phone number required.'; show('suError'); return; }
+  if (!address) { $('suError').textContent = 'Address is required.'; show('suError'); return; }
   try {
-    var j = await apiPost('/api/signup', { phone: phone, name: name });
+    var j = await apiPost('/api/signup', { phone: phone, name: name, address: address });
     $('suSuccess').textContent = j.message || 'Code sent! Check your phone.';
     show('suSuccess');
     // Auto-advance to step 2 after a moment
@@ -843,12 +895,15 @@ async function doSignupVerify() {
   if (pin.length < 4) { $('su2Error').textContent = 'PIN must be at least 4 characters.'; show('su2Error'); return; }
   if (pin !== pin2) { $('su2Error').textContent = 'PINs do not match.'; show('su2Error'); return; }
   try {
-    var j = await apiPost('/api/signup/verify', { phone: phone, code: code, pin: pin, name: $('suName').value.trim() });
-    $('su2Success').textContent = j.message || 'Account created! You can now sign in.';
+    var j = await apiPost('/api/signup/verify', { phone: phone, code: code, pin: pin, name: $('suName').value.trim(), address: $('suAddress').value.trim() });
+    // Auto sign-in after successful signup
+    state.phone = phone; state.pin = pin;
+    localStorage.setItem('session', JSON.stringify({ phone: phone, pin: pin }));
+    updateNavButtons();
+    $('su2Success').textContent = j.message || 'Account created! Signing you in...';
     show('su2Success');
-    // Pre-fill sign-in
-    $('inpPhone').value = phone;
-    setTimeout(function() { showTab('signin'); }, 2000);
+    var hasCart = Object.keys(state.cart).length > 0;
+    setTimeout(function() { showTab(hasCart ? 'cart' : 'shop'); }, 1500);
   } catch (e) {
     $('su2Error').textContent = e.message || 'Verification failed.'; show('su2Error');
   }

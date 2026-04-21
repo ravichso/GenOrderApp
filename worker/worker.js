@@ -266,9 +266,12 @@ async function getOrdersForCustomer(url, env) {
 async function createOrder(req, env) {
   const body = await req.json().catch(() => null);
   if (!body) return err('Invalid JSON');
-  const { phone, pin, items, notes } = body;
+  const { phone, pin, items, notes, delivery_address } = body;
   if (!phone || !pin || !Array.isArray(items) || items.length === 0) {
     return err('phone, pin and items required');
+  }
+  if (!delivery_address || !delivery_address.trim()) {
+    return err('Delivery address is required');
   }
   const openRow = await env.DB.prepare("SELECT value FROM settings WHERE key='ordering_open'").first();
   if (openRow && openRow.value === '0') return err('Ordering is currently closed', 403);
@@ -306,10 +309,11 @@ async function createOrder(req, env) {
   total = Math.round(total * 100) / 100;
 
   const code = orderCode();
+  const addr = (delivery_address || '').trim() || c.address || '';
   const res = await env.DB.prepare(
-    `INSERT INTO orders (order_code, customer_id, customer_name, customer_phone, total_amount, notes)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(code, c.id, c.name || '', c.phone, total, notes || '').run();
+    `INSERT INTO orders (order_code, customer_id, customer_name, customer_phone, delivery_address, total_amount, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(code, c.id, c.name || '', c.phone, addr, total, notes || '').run();
   const orderId = res.meta.last_row_id;
 
   for (const l of lines) {
@@ -420,9 +424,11 @@ async function authCustomer(env, phone, pin) {
 async function signupRequest(req, env) {
   const body = await req.json().catch(() => null);
   if (!body) return err('Invalid JSON');
-  const phone = normalizePhone(body.phone);
-  const name  = (body.name || '').trim();
+  const phone   = normalizePhone(body.phone);
+  const name    = (body.name || '').trim();
+  const address = (body.address || '').trim();
   if (!phone) return err('Phone number required');
+  if (!address) return err('Address is required for sign-up');
 
   // Check if sign-up is enabled
   const enabledRow = await env.DB.prepare("SELECT value FROM settings WHERE key='signup_enabled'").first();
@@ -442,10 +448,11 @@ async function signupRequest(req, env) {
   const code = randomCode(6);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
 
-  // Store pending signup
+  // Store pending signup (address stored temporarily in name field as name|address)
+  const pendingName = address ? (name + '|||' + address) : name;
   await env.DB.prepare(
     "INSERT INTO pending_signups (phone, name, code, expires_at) VALUES (?, ?, ?, ?)"
-  ).bind(phone, name, code, expiresAt).run();
+  ).bind(phone, pendingName, code, expiresAt).run();
 
   // Send via SMS or WhatsApp
   const storeName = (await env.DB.prepare("SELECT value FROM settings WHERE key='store_name'").first())?.value || 'Our Store';
@@ -501,18 +508,28 @@ async function signupVerify(req, env) {
   // Code is correct — create or activate the customer
   const salt = randomHex(8);
   const hash = await hashPin(pin, salt);
-  const displayName = name || pending.name || '';
+
+  // Parse name and address from pending record (stored as name|||address)
+  let pendingName = pending.name || '';
+  let pendingAddress = '';
+  if (pendingName.includes('|||')) {
+    const parts = pendingName.split('|||');
+    pendingName = parts[0];
+    pendingAddress = parts[1] || '';
+  }
+  const displayName = name || pendingName || '';
+  const displayAddress = (body.address || '').trim() || pendingAddress || '';
 
   // Upsert: if admin pre-created the phone without a PIN, update it; otherwise insert
   const existing = await env.DB.prepare("SELECT id FROM customers WHERE phone = ?").bind(phone).first();
   if (existing) {
     await env.DB.prepare(
-      "UPDATE customers SET name=?, pin_hash=?, pin_salt=?, reset_token=NULL, reset_expires_at=NULL, updated_at=datetime('now') WHERE id=?"
-    ).bind(displayName || null, hash, salt, existing.id).run();
+      "UPDATE customers SET name=?, address=?, pin_hash=?, pin_salt=?, reset_token=NULL, reset_expires_at=NULL, updated_at=datetime('now') WHERE id=?"
+    ).bind(displayName || null, displayAddress || null, hash, salt, existing.id).run();
   } else {
     await env.DB.prepare(
-      "INSERT INTO customers (phone, name, pin_hash, pin_salt) VALUES (?, ?, ?, ?)"
-    ).bind(phone, displayName, hash, salt).run();
+      "INSERT INTO customers (phone, name, address, pin_hash, pin_salt) VALUES (?, ?, ?, ?, ?)"
+    ).bind(phone, displayName, displayAddress, hash, salt).run();
   }
 
   // Clean up all pending signups for this phone
