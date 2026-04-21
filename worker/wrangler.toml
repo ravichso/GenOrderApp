@@ -10,7 +10,7 @@
 # 6. Set secrets:              wrangler secret put ADMIN_API_TOKEN
 # 7. Deploy:                   wrangler deploy
 # =====================================================================
-name = "generic-order-api"
+name = "gen-order-api"
 main = "worker.js"
 compatibility_date = "2025-04-01"
 
@@ -19,12 +19,12 @@ IMAGES_PUBLIC_BASE = ""
 
 [[d1_databases]]
 binding = "DB"
-database_name = "generic_order"
-database_id   = "REPLACE_WITH_YOUR_D1_ID"
+database_name = "gen_order"
+database_id   = "1f1df32f-0181-44c0-8e53-3f284ca0dfa3"
 
 [[r2_buckets]]
 binding = "IMAGES"
-bucket_name = "generic-order-images"
+bucket_name = "gen-order-images"
 
 # NOTE: ADMIN_API_TOKEN is set as a *secret*, not here:
 #   wrangler secret put ADMIN_API_TOKEN

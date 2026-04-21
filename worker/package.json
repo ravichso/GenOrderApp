@@ -6,8 +6,8 @@
   "scripts": {
     "dev":       "wrangler dev",
     "deploy":    "wrangler deploy",
-    "schema:local":  "wrangler d1 execute generic_order --local  --file=../schema/schema.sql",
-    "schema:remote": "wrangler d1 execute generic_order --remote --file=../schema/schema.sql",
+    "schema:local":  "wrangler d1 execute gen_order --local  --file=../schema/schema.sql",
+    "schema:remote": "wrangler d1 execute gen_order --remote --file=../schema/schema.sql",
     "tail":      "wrangler tail"
   },
   "devDependencies": {
